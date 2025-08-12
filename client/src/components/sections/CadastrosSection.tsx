@@ -1,4 +1,4 @@
-import { useClients, useProducts, useCategories, useSubcategories, useCreateClient, useUpdateClient, useDeleteClient, useCreateCategory, useCreateSubcategory } from "@/hooks/useData";
+import { useClients, useProducts, useCategories, useSubcategories, useCreateClient, useUpdateClient, useDeleteClient, useCreateCategory, useCreateSubcategory, useOverdueClients, useUpdateClientDebtStatus, useUpdateAllClientsDebtStatus } from "@/hooks/useData";
 import React, { useState } from 'react';
 import { useCategory } from '@/contexts/CategoryContext';
 import { formatDateBR } from '@/utils/dateFormat';
@@ -6,6 +6,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import type { Client } from '@shared/schema';
 import { Pagination, usePagination } from "@/components/ui/pagination";
 import { capitalizeWords } from "@/lib/utils";
+import ClientDebtStatus from '@/components/ClientDebtStatus';
 
 import {
   Users,
@@ -18,8 +19,129 @@ import {
   Trash2,
   Mail,
   Phone,
+  AlertTriangle,
+  RefreshCw,
   Building
 } from 'lucide-react';
+
+// Componente para aba de clientes inadimplentes
+const OverdueClientsTab = () => {
+  const { data: overdueClients = [], isLoading } = useOverdueClients();
+  const { mutateAsync: updateClientDebtStatus } = useUpdateClientDebtStatus();
+  const { mutateAsync: updateAllClientsDebtStatus } = useUpdateAllClientsDebtStatus();
+  const [isUpdatingAll, setIsUpdatingAll] = useState(false);
+
+  const handleUpdateAllStatus = async () => {
+    setIsUpdatingAll(true);
+    try {
+      await updateAllClientsDebtStatus();
+      // Notificação de sucesso seria adicionada aqui
+    } catch (error) {
+      console.error('Erro ao atualizar status em lote:', error);
+    } finally {
+      setIsUpdatingAll(false);
+    }
+  };
+
+  const handleUpdateClientStatus = async (clientId: string) => {
+    try {
+      await updateClientDebtStatus(clientId);
+      // Notificação de sucesso seria adicionada aqui
+    } catch (error) {
+      console.error('Erro ao atualizar status do cliente:', error);
+    }
+  };
+
+  if (isLoading) {
+    return (
+      <div className="flex items-center justify-center py-8">
+        <RefreshCw className="w-6 h-6 animate-spin text-blue-600" />
+        <span className="ml-2">Carregando clientes inadimplentes...</span>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-4">
+      {/* Header com ações */}
+      <div className="flex flex-col sm:flex-row gap-4 items-start sm:items-center justify-between">
+        <div>
+          <h3 className="text-lg font-semibold text-gray-900">Clientes Inadimplentes</h3>
+          <p className="text-sm text-gray-600">
+            {overdueClients.length} cliente{overdueClients.length !== 1 ? 's' : ''} com parcelas vencidas
+          </p>
+        </div>
+        <button
+          onClick={handleUpdateAllStatus}
+          disabled={isUpdatingAll}
+          className="btn btn-secondary flex items-center gap-2"
+        >
+          <RefreshCw className={`w-4 h-4 ${isUpdatingAll ? 'animate-spin' : ''}`} />
+          {isUpdatingAll ? 'Atualizando...' : 'Atualizar Status'}
+        </button>
+      </div>
+
+      {/* Lista de clientes inadimplentes */}
+      <div className="grid gap-4">
+        {overdueClients.map((client: any) => (
+          <div key={client.id} className="list-item">
+            <div className="flex-1">
+              <div className="flex items-start justify-between mb-2">
+                <div>
+                  <div className="list-item-title">
+                    {capitalizeWords(client.name)}
+                  </div>
+                  <div className="list-item-subtitle flex items-center gap-4">
+                    {client.email && (
+                      <span className="flex items-center gap-1">
+                        <Mail className="w-3 h-3" />
+                        {client.email}
+                      </span>
+                    )}
+                    {client.phone && (
+                      <span className="flex items-center gap-1">
+                        <Phone className="w-3 h-3" />
+                        {client.phone}
+                      </span>
+                    )}
+                  </div>
+                </div>
+                <ClientDebtStatus client={client} showDetails={false} />
+              </div>
+              
+              <ClientDebtStatus client={client} showDetails={true} />
+            </div>
+            
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => handleUpdateClientStatus(client.id)}
+                className="btn btn-secondary btn-sm"
+                title="Atualizar status"
+              >
+                <RefreshCw className="w-4 h-4" />
+              </button>
+              <button
+                onClick={() => {/* Implementar visualização de parcelas */}}
+                className="btn btn-primary btn-sm"
+                title="Ver parcelas"
+              >
+                <Eye className="w-4 h-4" />
+              </button>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {overdueClients.length === 0 && (
+        <div className="text-center py-8 text-gray-500">
+          <AlertTriangle className="w-12 h-12 mx-auto mb-4 opacity-50" />
+          <p>Nenhum cliente inadimplente encontrado</p>
+          <p className="text-sm mt-2">Todos os clientes estão em dia com os pagamentos!</p>
+        </div>
+      )}
+    </div>
+  );
+};
 
 const CadastrosSection = () => {
   const { selectedCategory } = useCategory();
@@ -567,6 +689,9 @@ const CadastrosSection = () => {
           </div>
         );
 
+      case 'inadimplentes':
+        return <OverdueClientsTab />;
+
       default:
         return null;
     }
@@ -654,6 +779,13 @@ const CadastrosSection = () => {
         >
           <Layers className="w-4 h-4" />
           Subcategorias
+        </button>
+        <button
+          onClick={() => setActiveTab('inadimplentes')}
+          className={`tab-button ${activeTab === 'inadimplentes' ? 'active' : ''}`}
+        >
+          <AlertTriangle className="w-4 h-4" />
+          Inadimplentes
         </button>
       </div>
 

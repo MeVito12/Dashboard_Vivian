@@ -320,6 +320,54 @@ export const useBranchExpenses = (company_id?: string) => {
   });
 };
 
+// ====================================
+// SISTEMA DE INADIMPLÊNCIA
+// ====================================
+
+// Clientes inadimplentes
+export const useOverdueClients = (company_id?: string) => {
+  const user = getCurrentUser();
+  const effective_company_id = company_id || (user?.company_id as any);
+  
+  return useQuery<any[]>({
+    queryKey: ['/api/clients/overdue', effective_company_id],
+    enabled: !!effective_company_id
+  });
+};
+
+// Informações de dívida de um cliente
+export const useClientDebtInfo = (clientId?: string) => {
+  return useQuery<any>({
+    queryKey: ['/api/clients', clientId, 'debt-info'],
+    queryFn: () => apiRequest(`/api/clients/${clientId}/debt-info`),
+    enabled: !!clientId
+  });
+};
+
+// Atualizar status de inadimplência de um cliente
+export const useUpdateClientDebtStatus = () => {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (clientId: string) => apiRequest(`/api/clients/${clientId}/update-debt-status`, { method: 'POST' }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['/api/clients'] });
+      queryClient.invalidateQueries({ queryKey: ['/api/clients/overdue'] });
+    }
+  });
+};
+
+// Atualizar status de todos os clientes (job em lote)
+export const useUpdateAllClientsDebtStatus = () => {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: () => apiRequest('/api/clients/update-all-debt-status', { method: 'POST' }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['/api/clients'] });
+      queryClient.invalidateQueries({ queryKey: ['/api/clients/overdue'] });
+    }
+  });
+};
+
 // CUPONS
 export const useCoupons = (company_id?: string) => {
   const user = getCurrentUser();

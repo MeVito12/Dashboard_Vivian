@@ -73,6 +73,11 @@ export interface Storage {
   getBranchRevenue(companyId: string): Promise<{branch_id: string, branch_name: string, revenue: number}[]>;
   getBranchExpenses(companyId: string): Promise<{branch_id: string, branch_name: string, expenses: number}[]>;
   
+  // Sistema de inadimplência
+  updateClientDebtStatus(clientId: string): Promise<any>;
+  getOverdueClients(companyId: string): Promise<any[]>;
+  getClientDebtInfo(clientId: string): Promise<any>;
+  
   // Clientes
   getClients(branchId?: number, companyId?: number): Promise<Client[]>;
   createClient(client: NewClient): Promise<Client>;
@@ -775,6 +780,101 @@ export class SupabaseStorage implements Storage {
     } catch (error) {
       console.error('Erro ao buscar gastos por filial:', error);
       return [];
+    }
+  }
+
+  // ====================================
+  // SISTEMA DE INADIMPLÊNCIA
+  // ====================================
+
+  async updateClientDebtStatus(clientId: string): Promise<any> {
+    try {
+      // Buscar todas as parcelas pendentes e vencidas do cliente
+      const overdueInstallments = await this.request(
+        `installments?select=*,sales!inner(client_id)&sales.client_id=eq.${clientId}&status=eq.pending&due_date=lt.${new Date().toISOString().split('T')[0]}`
+      );
+
+      let debtStatus = 'regular';
+      let overdueAmount = 0;
+      let overdueCount = 0;
+      let firstOverdueDate = null;
+
+      if (overdueInstallments.length > 0) {
+        // Calcular valores em atraso
+        overdueAmount = overdueInstallments.reduce((sum: number, installment: any) => sum + installment.amount, 0);
+        overdueCount = overdueInstallments.length;
+        
+        // Encontrar a primeira data de vencimento
+        const sortedDates = overdueInstallments
+          .map((i: any) => new Date(i.due_date))
+          .sort((a, b) => a.getTime() - b.getTime());
+        
+        firstOverdueDate = sortedDates[0];
+        
+        // Calcular status baseado no tempo da primeira parcela vencida
+        const daysSinceFirstOverdue = Math.floor((Date.now() - firstOverdueDate.getTime()) / (1000 * 60 * 60 * 24));
+        
+        if (daysSinceFirstOverdue >= 90) { // 3 meses = 90 dias
+          debtStatus = 'defaulter'; // Inadimplente
+        } else {
+          debtStatus = 'debtor'; // Devedor
+        }
+      }
+
+      // Atualizar o cliente
+      const [updatedClient] = await this.request(`clients?id=eq.${clientId}`, {
+        method: 'PATCH',
+        body: JSON.stringify({
+          debt_status: debtStatus,
+          debt_status_updated_at: new Date().toISOString(),
+          overdue_amount: overdueAmount,
+          overdue_installments_count: overdueCount,
+          first_overdue_date: firstOverdueDate ? firstOverdueDate.toISOString().split('T')[0] : null
+        })
+      });
+
+      return updatedClient;
+    } catch (error) {
+      console.error('Erro ao atualizar status de inadimplência:', error);
+      throw error;
+    }
+  }
+
+  async getOverdueClients(companyId: string): Promise<any[]> {
+    try {
+      // Buscar clientes com status de devedor ou inadimplente
+      const overdueClients = await this.request(
+        `clients?company_id=eq.${companyId}&debt_status=in.(debtor,defaulter)&select=*&order=first_overdue_date.asc`
+      );
+
+      return overdueClients;
+    } catch (error) {
+      console.error('Erro ao buscar clientes inadimplentes:', error);
+      return [];
+    }
+  }
+
+  async getClientDebtInfo(clientId: string): Promise<any> {
+    try {
+      // Buscar informações detalhadas da dívida do cliente
+      const [client] = await this.request(`clients?id=eq.${clientId}&select=*`);
+      
+      if (!client) return null;
+
+      // Buscar parcelas vencidas
+      const overdueInstallments = await this.request(
+        `installments?select=*,sales!inner(*)&sales.client_id=eq.${clientId}&status=eq.pending&due_date=lt.${new Date().toISOString().split('T')[0]}&order=due_date.asc`
+      );
+
+      return {
+        client,
+        overdueInstallments,
+        totalOverdue: overdueInstallments.reduce((sum: number, i: any) => sum + i.amount, 0),
+        overdueCount: overdueInstallments.length
+      };
+    } catch (error) {
+      console.error('Erro ao buscar informações de dívida:', error);
+      return null;
     }
   }
 

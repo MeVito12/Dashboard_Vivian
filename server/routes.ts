@@ -972,6 +972,27 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       const updatedInstallment = await storage.updateInstallmentStatus(installmentId, status);
       
+      // Buscar o cliente relacionado à parcela para atualizar seu status
+      try {
+        const installmentWithSale = await storage.request(
+          `installments?id=eq.${installmentId}&select=*,sales!inner(client_id)`
+        );
+        
+        if (installmentWithSale.length > 0 && installmentWithSale[0].sales?.client_id) {
+          await storage.updateClientDebtStatus(installmentWithSale[0].sales.client_id);
+          Logger.info('Status de inadimplência do cliente atualizado automaticamente', {
+            clientId: installmentWithSale[0].sales.client_id,
+            installmentId
+          });
+        }
+      } catch (clientUpdateError) {
+        Logger.error('Erro ao atualizar status do cliente após pagamento de parcela', {
+          installmentId,
+          error: clientUpdateError
+        });
+        // Não falhar a operação principal se houver erro na atualização do cliente
+      }
+      
       res.status(HTTP_STATUS.OK).json({
         data: updatedInstallment,
         message: `Parcela marcada como ${status === 'paid' ? 'paga' : 'pendente'}`
@@ -1038,6 +1059,134 @@ export async function registerRoutes(app: Express): Promise<Server> {
       Logger.error('Erro ao buscar gastos por filial', { companyId, error });
       res.status(HTTP_STATUS.INTERNAL_SERVER_ERROR).json({
         error: ERROR_MESSAGES.LOAD_ERROR
+      });
+    }
+  });
+
+  // ====================================
+  // SISTEMA DE INADIMPLÊNCIA
+  // ====================================
+
+  // Atualizar status de inadimplência de um cliente
+  app.post("/api/clients/:clientId/update-debt-status", authMiddleware, async (req, res) => {
+    const userId = req.headers['x-user-id'] as string;
+    const { clientId } = req.params;
+    
+    try {
+      if (!userId) {
+        return res.status(HTTP_STATUS.BAD_REQUEST).json({
+          error: ERROR_MESSAGES.UNAUTHORIZED
+        });
+      }
+
+      const updatedClient = await storage.updateClientDebtStatus(clientId);
+      
+      res.status(HTTP_STATUS.OK).json({
+        data: updatedClient,
+        message: 'Status de inadimplência atualizado com sucesso'
+      });
+    } catch (error: any) {
+      Logger.error('Erro ao atualizar status de inadimplência', { clientId, error });
+      res.status(HTTP_STATUS.INTERNAL_SERVER_ERROR).json({
+        error: ERROR_MESSAGES.UPDATE_ERROR
+      });
+    }
+  });
+
+  // Listar clientes inadimplentes
+  app.get("/api/clients/overdue", authMiddleware, async (req, res) => {
+    const userId = req.headers['x-user-id'] as string;
+    const companyId = req.headers['x-company-id'] as string;
+    
+    try {
+      if (!userId || !companyId) {
+        return res.status(HTTP_STATUS.BAD_REQUEST).json({
+          error: ERROR_MESSAGES.UNAUTHORIZED
+        });
+      }
+
+      const overdueClients = await storage.getOverdueClients(companyId);
+      
+      res.status(HTTP_STATUS.OK).json({
+        data: overdueClients,
+        message: 'Clientes inadimplentes carregados com sucesso'
+      });
+    } catch (error: any) {
+      Logger.error('Erro ao buscar clientes inadimplentes', { companyId, error });
+      res.status(HTTP_STATUS.INTERNAL_SERVER_ERROR).json({
+        error: ERROR_MESSAGES.LOAD_ERROR
+      });
+    }
+  });
+
+  // Obter informações detalhadas da dívida de um cliente
+  app.get("/api/clients/:clientId/debt-info", authMiddleware, async (req, res) => {
+    const userId = req.headers['x-user-id'] as string;
+    const { clientId } = req.params;
+    
+    try {
+      if (!userId) {
+        return res.status(HTTP_STATUS.BAD_REQUEST).json({
+          error: ERROR_MESSAGES.UNAUTHORIZED
+        });
+      }
+
+      const debtInfo = await storage.getClientDebtInfo(clientId);
+      
+      if (!debtInfo) {
+        return res.status(HTTP_STATUS.NOT_FOUND).json({
+          error: 'Cliente não encontrado'
+        });
+      }
+      
+      res.status(HTTP_STATUS.OK).json({
+        data: debtInfo,
+        message: 'Informações de dívida carregadas com sucesso'
+      });
+    } catch (error: any) {
+      Logger.error('Erro ao buscar informações de dívida', { clientId, error });
+      res.status(HTTP_STATUS.INTERNAL_SERVER_ERROR).json({
+        error: ERROR_MESSAGES.LOAD_ERROR
+      });
+    }
+  });
+
+  // Atualizar status de inadimplência em lote (job diário)
+  app.post("/api/clients/update-all-debt-status", authMiddleware, async (req, res) => {
+    const userId = req.headers['x-user-id'] as string;
+    const companyId = req.headers['x-company-id'] as string;
+    
+    try {
+      if (!userId || !companyId) {
+        return res.status(HTTP_STATUS.BAD_REQUEST).json({
+          error: ERROR_MESSAGES.UNAUTHORIZED
+        });
+      }
+
+      // Buscar todos os clientes da empresa que têm parcelas
+      const clientsWithInstallments = await storage.request(
+        `clients?company_id=eq.${companyId}&select=id`
+      );
+
+      let updatedCount = 0;
+      
+      for (const client of clientsWithInstallments) {
+        try {
+          await storage.updateClientDebtStatus(client.id);
+          updatedCount++;
+        } catch (error) {
+          Logger.error('Erro ao atualizar cliente específico', { clientId: client.id, error });
+        }
+      }
+      
+      res.status(HTTP_STATUS.OK).json({
+        data: { updatedCount, totalClients: clientsWithInstallments.length },
+        message: `Status de inadimplência atualizado para ${updatedCount} clientes`
+      });
+    } catch (error: any) {
+      Logger.error('Erro ao atualizar status em lote', { companyId, error });
+      res.status(HTTP_STATUS.INTERNAL_SERVER_ERROR).json({
+        error: ERROR_MESSAGES.UPDATE_ERROR
       });
     }
   });

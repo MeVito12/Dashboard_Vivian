@@ -6,7 +6,7 @@ interface UseLoadingOptions {
 }
 
 export const useLoading = (
-  isLoading: boolean, 
+  isLoading: boolean,
   options: UseLoadingOptions = {}
 ) => {
   const { minLoadingTime = 500, delay = 200 } = options;
@@ -14,8 +14,8 @@ export const useLoading = (
   const [isMinTimeReached, setIsMinTimeReached] = useState(false);
 
   useEffect(() => {
-    let delayTimer: NodeJS.Timeout;
-    let minTimeTimer: NodeJS.Timeout;
+    let delayTimer: NodeJS.Timeout | undefined;
+    let minTimeTimer: NodeJS.Timeout | undefined;
 
     if (isLoading) {
       // Delay antes de mostrar o loading
@@ -28,9 +28,9 @@ export const useLoading = (
         setIsMinTimeReached(true);
       }, minLoadingTime);
     } else {
-      // Se não está carregando, limpar timers
-      clearTimeout(delayTimer);
-      
+      // Se não está carregando, limpar timers se existirem
+      if (delayTimer) clearTimeout(delayTimer);
+
       // Se o tempo mínimo foi atingido, esconder imediatamente
       if (isMinTimeReached) {
         setShowLoading(false);
@@ -40,13 +40,13 @@ export const useLoading = (
         setTimeout(() => {
           setShowLoading(false);
           setIsMinTimeReached(false);
-        }, minLoadingTime - delay);
+        }, Math.max(0, minLoadingTime - delay));
       }
     }
 
     return () => {
-      clearTimeout(delayTimer);
-      clearTimeout(minTimeTimer);
+      if (delayTimer) clearTimeout(delayTimer);
+      if (minTimeTimer) clearTimeout(minTimeTimer);
     };
   }, [isLoading, delay, minLoadingTime, isMinTimeReached]);
 
